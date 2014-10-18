@@ -1,4 +1,4 @@
-function [Data RData Vector Vector_Window]= sll_analyze_vcode_ver3(path, filename, varargin)
+function [Data RData Vector Vector_Window]= sll_vcode_ver3(path, filename, varargin)
 
 
 % This function uses exported txt files from vCode (.cod) and analyzes the
