@@ -1,0 +1,35 @@
+function [Data2 num_actions] = sll_analyze_vectors(matfiles, varname, dur, savefile)
+% this works with already vectorized data to provide onsets, offsets, and
+% durations of each actions coded in the Vector (or Vector_isolated, or
+% similar variables).
+
+% varname: Vector or whatever you want to analyze
+% dur: will ignore actions smaller than the duration. (in seconds)
+dur = dur*10;
+num_actions = 0;
+Data2 = struct('Ons',[],'Offs',[], 'Dur',[],'Freq',[],'TotalDur',[]);
+
+for i = 1:length(matfiles)
+    load(matfiles{i})
+    eval(['varname = ' varname])
+    for j = 1:size(varname,1)  %for all actions in Vector
+        temp = findstr(varname(j,:),ones(1,dur)); % find consecutive 1's longer than "dur"
+        Data2(j).Ons = temp(diff([1 temp])~=1); % onsets
+        Data2(j).Offs = temp(diff([temp 1])~=1); %offsets
+        Data2(j).Dur = Data2(j).Offs - Data2(j).Ons + dur;
+        Data2(j).Freq = length(Data2(j).Ons);
+        Data2(j).TotalDur = sum(Data2(j).Dur);
+        if Data2(j).Freq > 0
+        num_actions(i,1) = num_actions+1;
+        end
+    end
+    
+    
+    if savefile
+        save(matfiles{i},'Data2', '-append')
+    end
+ 
+    
+end
+
+end
