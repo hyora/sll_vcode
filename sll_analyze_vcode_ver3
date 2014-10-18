@@ -1,0 +1,296 @@
+function [Data RData Vector Vector_Window]= sll_analyze_vcode_ver3(path, filename, varargin)
+
+
+% This function uses exported txt files from vCode (.cod) and analyzes the
+% onset, duration, etc., for the coded variables.
+% Usage: Data = sll_analyze_vcode(path, filename, varargin)
+% e.g., Data = sll_analyze_vcode(pwd, filename{1},'Window',[0 60],'PlayVarName','Play','Vars_To_Analyze',{'TotalBeep','TotalBuzzer'});
+%
+% path: where to look for the txt file
+% filename: txt filename
+%
+% Varargins:
+% 1. PlayVarName: default is 'TotalPlay'. Otherwise, enter variable name that codes total play
+% 2. Window: save data for specific time window within Total Play (e.g., for
+%     the first 60 sec of Free Play, use [0 60], default is [0,0], First60sec : [0,60]
+% 3. Vars_To_Analyze: default is 0 (all). To analyze specific variables, use 1
+% 4. SaveFile: default is 1, use 0 if you don't want to save the .mat file but just display the outputs on the screen
+% 5. Vectorize: default is 0, use  if you don't want a matrix with 
+%
+% VER2: in VER1, Data includes everything in the text file. VER2 uses
+% PlayVarName to decide which rows to use in the analysis. (e.g., if
+% there's a Play phase and Teach phase, you can use the script once for
+% Play as PlayVarName and then again for Teach as PlayVarName! 
+% Data in VER1 is now called RData in VER2
+% 
+% VER3: added "vectorize" functionality to make it easier to see how much
+% time actions are overlapping with one another and to visualize the
+% actions. Each cell corresponds to 100ms (1/10sec). PlayVar onset is
+% rounded down (203.3890 -> 203.3), offset is rounded up (396.5850 -> 396.6)
+% variables to analyze (Vec_Var) are rounded at .1 sec
+%
+
+%default values
+Window = [0,0];
+Vars_To_Analyze = 0; % analyze all variables
+PlayVarName = 'TotalPlay';
+SaveFile = 1;
+Vectorize = 0;
+Vector = [];
+Vector_Window = [0,0];
+
+if ~isempty(varargin)
+    for i = 1:length(varargin)
+        if strcmpi(varargin(i),'Window') && isnumeric(varargin{i+1})>0
+            Window = varargin{i+1}; end
+        if strcmpi(varargin(i),'Vars_To_Analyze') && isnumeric(varargin{i+1})
+            Vars_To_Analyze = varargin{i+1}; end
+        if strcmpi(varargin(i),'PlayVarName')&& ischar(varargin{i+1})
+            PlayVarName = varargin{i+1}; end
+        if strcmpi(varargin(i),'SaveFile') && isnumeric(varargin{i+1})
+            SaveFile = varargin{i+1}; end
+        if strcmpi(varargin(i),'Vectorize') && iscell(varargin{i+1})
+            Vectorize = 1; Vec_Var = varargin{i+1};
+    end
+end
+
+%%
+
+filepath = fullfile(path, filename);
+fid = fopen(filepath);
+temph = fgetl(fid); %dump the first line
+temph = fgetl(fid); %get the second line
+temph = temph(9:end); % drop "Tracks: "
+temph = regexp(temph,'\W\s','split'); %split by white space and comma..
+
+%get the variables we need
+fprintf('\n################# FileName: %s  ######################',filename);
+fprintf('\nVariables: %s',temph{1:end});
+
+if Vars_To_Analyze == 1
+    variables = input('\n\nUse specific variables? Enter variable names: e.g.,{''TotalPlay'',''TargetAction''})\n');
+    variables = {PlayVarName variables{:}};
+else
+    temp = strcmp(temph,PlayVarName);
+    variables = {PlayVarName temph{~temp}}; %use all variables
+end
+
+%% read in txt, save stuff in Data
+C = textscan(fid, '%d%d%s%s', 'Delimiter',',','HeaderLines',2);
+[C1,ind] = sort(C{1});
+C2 = C{2}(ind);
+C3 = C{3}(ind);
+C4 = C{4}(ind);
+clear ind;
+
+RData = struct('Name',{},'Ons',[], 'Dur',[]);
+for i = 1:length(variables)
+    RData(i).Name = variables{i};
+end
+
+for i = 1:length(C3) %loop
+    whichvar = find(strcmp(variables, C3(i)));
+    if whichvar > 0
+        RData(whichvar).Ons = [RData(whichvar).Ons; double(C1(i))/1000];
+        RData(whichvar).Dur = [RData(whichvar).Dur; double(C2(i))/1000];
+    end
+end
+%% PlayTime Analysis
+x = find(strcmp(PlayVarName,{RData.Name})); %find where this variable is saved
+
+if length(RData(x).Ons) >1
+    error('ERROR! Total Play variable has more than one onset. Quitting... \n')
+end
+
+PlayStartEndDur = zeros(2,6); %PlayStart, End, and Duration -0:X:YY format
+
+PlayStartEndDur(1,1) = floor(RData(x).Ons/60); %start
+PlayStartEndDur(1,2) = round(rem(RData(x).Ons, 60)*10)/10;
+PlayStartEndDur(1,3) = floor((RData(x).Ons+RData(x).Dur)/60);%end
+PlayStartEndDur(1,4) = round(rem(RData(x).Ons+RData(x).Dur, 60)*10)/10;
+PlayStartEndDur(1,5) = floor(RData(x).Dur/60);%duration
+PlayStartEndDur(1,6) = round(rem(RData(x).Dur, 60)*10)/10;
+
+fprintf('\n\nTotalPlay: \n Start(h:mm:ss): 0:%02d:%02d, End(h:mm:ss): 0:%02d:%02d, Duration(seconds): %0.1f sec.\n\n', PlayStartEndDur(1,1), round(PlayStartEndDur(1,2)),PlayStartEndDur(1,3),round(PlayStartEndDur(1,4)), round(RData(x).Dur.*10)/10);
+
+
+%% Calculate total duration etc., and display outputs for all variables within PLAYStartEndDur
+
+for i =1:size(RData,2)
+    RData(i).Offs = RData(i).Ons + RData(i).Dur;
+end
+
+for i = 2:size(RData,2)
+Data(i-1).Name = RData(i).Name;
+Data(i-1).Ons = RData(i).Ons(RData(i).Ons >= RData(1).Ons & RData(i).Offs <= RData(1).Offs); %select onsets that are within PlayVarName's range
+Data(i-1).Dur = RData(i).Dur(RData(i).Ons >= RData(1).Ons & RData(i).Offs <= RData(1).Offs);%select offses that are within PlayVarName's range
+Data(i-1).Offs = RData(i).Offs(RData(i).Ons >= RData(1).Ons & RData(i).Offs <= RData(1).Offs); %select durations that are within PlayVarName's range
+Data(i-1).Freq = length(Data(i-1).Ons); %save freq
+Data(i-1).TotalDur = sum(Data(i-1).Dur); %save total duration
+    fprintf('\nVariable %s: \n Onset:   %s \n Offset:    %s \n Duration: %s \n Total Duration: %s  \n Frequency: %d \n\n', Data(i-1).Name, num2str(round(Data(i-1).Ons'.*10)/10), num2str(round(Data(i-1).Offs'.*10)/10),num2str(round(Data(i-1).Dur'.*10)/10), num2str(round(Data(i-1).TotalDur'.*10)/10),length(Data(i-1).Ons));
+end
+
+%% Vectorize
+if Vectorize == 1
+    Vector = vectorize_play(RData, Data, Vec_Var);
+
+    vv(1,:) = sum(Vector,1); % sum all the actions to see which timepoints are isolated actions
+    
+    Vector_isolate = zeros(size(Vector,1),size(Vector,2));
+    Vector_overlap = Vector_isolate;
+    for j = 1:size(Vector,2)
+        if vv(1,j) == 1
+            Vector_isolate(:,j) = Vector(:,j);
+        elseif vv(1,j) > 1
+            Vector_overlap(:,j) = Vector(:,j);
+        end
+    end
+end
+
+
+%% Analyzing specific time window:
+
+
+if sum(Window) > 0
+    if RData(x).Ons + Window(1) <= RData(x).Offs %check Onset of window
+        
+        %PlayStartEndDur 2nd row: Window Start min, Window Start sec, Window End min, Window End sec, start(sec), end(sec).
+        PlayStartEndDur(2,5) = RData(x).Ons + Window(1);%window start
+        
+        
+        PlayStartEndDur(2,1) = floor((RData(x).Ons + Window(1))/60);%start
+        PlayStartEndDur(2,2) = round(rem(round(RData(x).Ons + Window(1)), 60)*10)/10;
+        
+        if RData(x).Ons + sum(Window) <= RData(x).Offs %check if end of window is later than end of play
+            PlayStartEndDur(2,3) = floor((RData(x).Ons + sum(Window))/60);%if not, then good
+            PlayStartEndDur(2,4) = round(rem(round(RData(x).Ons+sum(Window)), 60)*10)/10;
+            PlayStartEndDur(2,6) = RData(x).Ons + sum(Window);%window end
+            
+        else
+            PlayStartEndDur(2,3) = PlayStartEndDur(1,3); % if so, end of play is end of window
+            PlayStartEndDur(2,4) = PlayStartEndDur(1,4);
+            PlayStartEndDur(2,6) = RData(x).Ons + RData(x).Dur;%Window end = play end
+            
+            sprintf('Window ends past End Of Play... Real window length is %d. \n ', RData(x).Dur);
+        end
+        
+        
+        clear i
+        fprintf('\n\nWindow: \n Start(h:mm:ss): 0:%02d:%02d, End(h:mm:ss): 0:%02d:%02d, Duration(seconds): %0.1f sec.\n\n', PlayStartEndDur(2,1), PlayStartEndDur(2,2),PlayStartEndDur(2,3),PlayStartEndDur(2,4), Window(2));
+        ind =  size(Data,2);
+        for i = 1:ind % for all variables in Data except Total Play
+            %if i ~= x
+                Data(ind+i).Name = {};
+                Data(ind+i).Name = sprintf('%s_%dsec',Data(i).Name, Window(2));
+                crit = Data(i).Ons >= PlayStartEndDur(2,5) & Data(i).Ons <=  PlayStartEndDur(2,6); %do values exist in the window?
+                if sum(crit) > 0 %if values exist within window
+                    
+                    Data(ind+i).Ons = Data(i).Ons(crit);
+                    Data(ind+i).Dur = Data(i).Dur(crit);
+                    Data(ind+i).Offs = Data(i).Offs(crit);
+                    Data(ind+i).Freq = length(Data(i).Ons(crit));
+                    if Data(ind+i).Offs(end) > PlayStartEndDur(2,6)% if the last Ons + Dur is larger than End of Window,
+                        Data(ind+i).Dur(end) = PlayStartEndDur(2,6) - Data(ind+i).Ons(end);% last duration is End of Window - last onset
+                        Data(ind+i).Offs(end) = PlayStartEndDur(2,6);
+                    end
+                    %
+               
+                else
+                    Data(ind+i).Ons = 0;
+                    Data(ind+i).Dur = 0;
+                    Data(ind+i).Offs = 0;
+                    Data(ind+i).Freq = 0;
+                end
+                Data(ind+i).TotalDur = sum(Data(ind+i).Dur);
+                
+                fprintf('\nVariable %s Window: \n Duration during Window: %0.1f \n Frequency during Window: %d  \n\n', Data(ind+i).Name, round((Data(ind+i).TotalDur).*10)/10, Data(ind+i).Freq);
+                
+            %end % except x
+        end %for i
+        
+    else
+        
+        error('Beginning of Window is after the end of Play!!.\n')
+        
+    end %
+    if Vectorize == 1  % if Vector exists, save one for Window
+        if RData(1).Dur < (Window(2)-Window(1)) % if play dur is shorter than window
+          Vector_Window = Vector; %save the whole thing
+        else % if longer, cut 
+            Vector_Window = Vector(:,Window(1)*10+1:Window(2)*10);
+           
+        end
+        
+    end
+    
+end
+
+%% save output file
+
+if SaveFile
+[path, logfile, c] = fileparts(filepath);
+%decide what to save
+  variables_to_save = {'path','variables','Data','PlayStartEndDur','RData'};
+  if Vectorize == 1
+      variables_to_save{end+1} = 'Vector';
+      variables_to_save{end+1} = 'Vector_isolate';
+      variables_to_save{end+1} = 'Vector_overlap';
+      if sum(Window) > 0
+          variables_to_save{end+1} = 'Vector_Window';
+      end
+  end
+ 
+
+if sum(Window)>0 %specify .mat filenames: if Window option is on, include window in the filename
+    outputfile = sprintf('%s_%s_W%d_%d_Data.mat',logfile, PlayVarName, Window(1), Window(2));
+else
+     outputfile = sprintf('%s_%s_Data.mat',logfile, PlayVarName);
+
+end
+
+%if SaveFile
+    if exist(fullfile(path,outputfile)) %check if same file exists
+        overwrite = input(['file ' outputfile ' already exists! overwrite? (1:yes 0:no)\n'])
+        if overwrite
+            save(outputfile,variables_to_save{:})
+        else
+            outputfile = input('specify filename (e.g., ''file.mat''):\n')
+            save(outputfile,variables_to_save{:})
+        end
+    else
+            save(outputfile,variables_to_save{:})
+    end
+end %if SaveFile
+
+fprintf('###################################################################################\n')
+
+
+end %function
+
+% separate function: Vector = Vectorize(RData, Data, Vec_Var)
+%get play start and duration
+function Vector = vectorize_play(RData, Data, Vec_Var)
+Vec_ons = floor(RData(1).Ons*10); %integer indicating PlayVarName onset (e.g., 2033 means 203.3xxx seconds)
+Vec_length = ceil(RData(1).Dur*10); % length of vector (e.g., 1901 means PlayVarName duration was 190.1xxx seconds)
+Vector = zeros(length(Vec_Var), Vec_length);
+for i = 1:length(Vec_Var) %start with the first Vec_Var
+    %first, find where current Vec_Var is saved
+    for ind = 1:length(Data)
+        if strcmp(Vec_Var{i}, Data(ind).Name)
+            varpos = ind; %variable position in Data is Data(k)
+        end
+    end % Data
+    clear ind
+    if ~exist('varpos','var')
+           error('ERROR! Var_Vec includes a name that does not exist in Data. Quitting... \n')
+    end 
+    
+    ons_dur = round([(Data(varpos).Ons*10) - Vec_ons Data(varpos).Dur*10]);
+ for j = 1:size(ons_dur,1) %for every action
+     Vector(varpos, ons_dur(j,1)) = 1; %mark the onset of action.
+     for k = 1:ons_dur(j,2) %and then mark for the entire duration of the action
+    Vector(varpos,(ons_dur(j,1)+k)) = 1;
+     end
+ end
+    
+end % Vec_Var
